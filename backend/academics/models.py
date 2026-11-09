@@ -19,7 +19,7 @@ class Program(models.Model):
 
 class Class(models.Model):
     name = models.CharField(max_length=20)
-    program = models.ForeignKey(Program, on_delete=models.CASCADE, related_name="classes")
+    program = models.ForeignKey(Program, on_delete=models.PROTECT, related_name="classes")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     

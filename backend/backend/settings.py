@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'accounts',
     'academics',
+    'reporting',
 ]
 
 MIDDLEWARE = [
@@ -124,11 +125,6 @@ STATIC_URL = 'static/'
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
 
-MAILERS = {
-    'default': {
-        'BACKEND': 'django.core.mail.backends.console.EmailBackend',
-    },
-}
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
@@ -138,3 +134,9 @@ REST_FRAMEWORK = {
         "rest_framework.permissions.isAuthenticated"
     ]
 }
+
+EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+DEFAULT_FROM_EMAIL = "Kiddies Droid Portal <no-reply@localhost>"
+
+FRONTEND_BASE_URL = "http://localhost:5173"
