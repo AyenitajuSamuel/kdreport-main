@@ -13,8 +13,13 @@ from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from django.core.exceptions import ValidationError
 from django.contrib.auth.password_validation import validate_password
+from rest_framework.response import Response
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
+from . import serializers
+from rest_framework import generics, permissions
+from django.shortcuts import get_object_or_404
+from . import models
 
 
 # Create your views here.
@@ -204,3 +209,125 @@ def password_reset_confirm(request):
 
     return JsonResponse({"detail": "Your password has been set. You can now log in."})
 
+
+class IsAdminOrReadOnly(permissions.BasePermission):
+    def has_permission(self, request, view):
+        if request.method in permissions.SAFE_METHODS:
+            return bool(request.user and request.user.is_authenticated)
+
+        user = request. user
+        return bool(user and user.is_authenticated and (user.is_superuser or user.role == user.Role.ADMIN)
+        )
+
+class IsAdminOnly(permissions.BasePermission):
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(user and user.is_authenticated and (user.is_superuser or user.role == user.Role.ADMIN)
+        )
+
+class StudentProfileListCreateView(generics.ListCreateAPIView):
+    queryset = models.StudentProfile.objects.all().order_by('user__first_name')
+    serializer_class = serializers.StudentProfileSerializer
+    permission_classes = [IsAdminOnly]
+
+    def perform_create(self, serializer):
+        profile = serializer.save()
+        send_mail(
+            subject="Your Kiddies Droid student account",
+            message=(
+                f"A student account has been created for {profile.user.get_full_name()}.\n\n"
+                f"Username: {profile.user.username}\n"
+                f"Temporary password: {profile._temporary_password}\n\n"
+                "Please sign in and change the password."
+            ),
+            from_email=None,
+            recipient_list=[profile.parent_email],
+        )
+
+
+class StudentProfileDetailView(generics.RetrieveUpdateAPIView):
+    queryset = models.StudentProfile.objects.select_related("user")
+    serializer_class = serializers.StudentProfileSerializer
+    permission_classes = [IsAdminOnly]
+
+
+class InstructorProfileListCreateView(generics.ListCreateAPIView):
+    queryset = models.InstructorProfile.objects.select_related("user").order_by("user__last_name", "user__first_name")
+    serializer_class = serializers.InstructorProfileSerializer
+    permission_classes = [IsAdminOnly]
+
+    def perform_create(self, serializer):
+        profile = serializer.save()
+        send_mail(
+            subject="Your Kiddies Droid instructor account",
+            message=(
+                f"Username: {profile.user.username}\n"
+                f"Temporary password: {profile._temporary_password}\n\n"
+                "Please sign in and change the password."
+            ),
+            from_email=None,
+            recipient_list=[profile.user.email],
+        )
+
+
+class InstructorProfileDetailView(generics.RetrieveUpdateAPIView):
+    queryset = models.InstructorProfile.objects.select_related("user")
+    serializer_class = serializers.InstructorProfileSerializer
+    permission_classes = [IsAdminOnly]
+
+
+class StudentMeView(generics.RetrieveUpdateAPIView):
+    serializer_class = serializers.StudentSelfProfileSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self):
+        if self.request.user.role != self.request.user.Role.STUDENT:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("This endpoint is for student accounts.")
+        return get_object_or_404(models.StudentProfile, user=self.request.user)
+
+
+class StudentMyEnrollmentsView(generics.ListAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        if self.request.user.role != self.request.user.Role.STUDENT:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("This endpoint is for student accounts.")
+        from academics.models import StudentEnrollment
+        return StudentEnrollment.objects.filter(student__user=self.request.user).select_related("program", "classroom")
+
+    def list(self, request, *args, **kwargs):
+        from academics.serializers import StudentEnrollmentSerializer
+        return Response(StudentEnrollmentSerializer(self.get_queryset(), many=True).data)
+
+
+class StudentMyReportsView(generics.ListAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def list(self, request, *args, **kwargs):
+        if request.user.role != request.user.Role.STUDENT:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("This endpoint is for student accounts.")
+        from reporting.models import ClassReport
+        from reporting.serializers import ClassReportSerializer
+        reports = ClassReport.objects.filter(
+            classroom__enrollments__student__user=request.user,
+            status=ClassReport.Status.PUBLISHED,
+        ).select_related("classroom", "author__user").distinct().order_by("-published_on")
+        return Response(ClassReportSerializer(reports, many=True).data)
+
+
+class StudentMyFeedbackView(generics.ListAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def list(self, request, *args, **kwargs):
+        if request.user.role != request.user.Role.STUDENT:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("This endpoint is for student accounts.")
+        from reporting.models import StudentFeedback
+        from reporting.serializers import StudentFeedbackSerializer
+        feedback = StudentFeedback.objects.filter(
+            enrollment__student__user=request.user,
+        ).select_related("enrollment", "author__user")
+        return Response(StudentFeedbackSerializer(feedback, many=True).data)
