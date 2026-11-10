@@ -18,7 +18,7 @@ The API base path is `/api/v1/`. For local development, the frontend is configur
 
 ## 2. Run the backend
 
-Run these commands from the `backend/` directory, with the project's Python environment activated and Django plus Django REST Framework installed:
+Run these commands from the `backend/` directory, with the project's Python environment activated and the packages in `requirements.txt` installed:
 
 ```bash
 python manage.py check
@@ -26,7 +26,7 @@ python manage.py migrate
 python manage.py runserver
 ```
 
-`check` looks for Django configuration problems. `migrate` creates or updates the database tables from the app migrations. `runserver` starts Django's development server. Do not use `runserver` as a production server.
+For local development, copy `.env.example` to `.env`, edit it, then load it in Bash with `set -a; source .env; set +a`. `check` looks for Django configuration problems. `migrate` creates or updates the database tables from the app migrations. `runserver` starts Django's development server. Do not use `runserver` as a production server.
 
 The custom user model is configured as `accounts.User`. It must remain the configured user model; changing it after database migrations have been created can require careful database migration work.
 
@@ -52,7 +52,7 @@ const response = await fetch("http://localhost:8000/api/v1/auth/login/", {
 });
 ```
 
-The current settings do not include a CORS package or CORS allow-list. If the browser blocks requests from the React development server, configure a development proxy or add an explicit CORS configuration for the frontend origin. CORS and CSRF are separate checks: allowing an origin through CORS does not remove the CSRF requirement.
+The Vite development server proxies API requests to Django, so the browser uses one origin in development. CORS and CSRF are separate checks: allowing an origin through CORS does not remove the CSRF requirement.
 
 ### Authentication endpoints
 
@@ -104,7 +104,7 @@ StudentFeedback ── belongs to a StudentEnrollment and an InstructorProfile
 ```
 
 - A `User` authenticates with a unique username and has one role. First and last names are Django user fields.
-- A `StudentProfile` adds the required parent email. A student does not need a personal email address.
+- A `StudentProfile` adds the required parent email. A student does not need a personal email address. Only administrators receive the parent email through account management endpoints; instructor rosters and a student's own profile omit it.
 - An `InstructorProfile` links an instructor account to the instructor role. Instructor email is stored on the related user.
 - A `Program` can have optional start and end dates. Its status is `upcoming`, `active`, `completed`, or `archived`.
 - A `Class` belongs to one program. Class names must be unique within that program.
@@ -134,7 +134,7 @@ Paths are relative to `/api/v1/`.
 | `GET`, `POST` | `/student/` | Admin | List student profiles or create a student account. |
 | `GET`, `PUT`, `PATCH` | `/student/{student_id}/` | Admin | Read or update a student profile. |
 | `GET`, `PUT`, `PATCH` | `/student/me/` | Signed-in student | Read own profile or change own username. |
-| `GET` | `/student/me/enrollments/` | Signed-in student | List own enrollments. |
+| `GET` | `/student/me/enrollments/` | Signed-in student | List own enrollments, including program and class names. |
 | `GET` | `/student/me/reports/` | Signed-in student | List published reports for own classes. |
 | `GET` | `/student/me/feedback/` | Signed-in student | List feedback for own enrollments. |
 | `GET`, `POST` | `/instructors/` | Admin | List or create instructor profiles/accounts. |
@@ -144,7 +144,7 @@ Student creation expects `first_name`, `last_name`, and `parent_email`. It creat
 
 Instructor creation expects `first_name`, `last_name`, and `email`. The username is based on the email's part before `@`; a numeric suffix is added to avoid collisions. A generated temporary password and username are sent to the instructor's email.
 
-In the current development settings, email uses Django's console backend. Email messages are printed in the Django server terminal; configure a real email backend before expecting messages in an inbox.
+In development, email uses Django's console backend. Email messages are printed in the Django server terminal. Production uses SMTP settings from environment variables; configure them before expecting messages in an inbox.
 
 ## 7. Academic endpoints
 
@@ -196,8 +196,9 @@ There are two URL forms for these views:
 | --- | --- | --- | --- |
 | `GET` | `/my/classes/` | `/academics/my/classes/` | Instructor or admin. Instructors see their assigned classes; admins see all classes. |
 | `GET` | `/classes/{class_id}/students/` | `/academics/classes/{class_id}/students/` | Assigned instructor or admin. |
+| `GET` | `/classes/{class_id}/enrollments/` | — | Assigned instructor or admin; returns enrollment IDs needed to create student feedback. |
 
-The roster response is a list of student profile records. The current roster serializer includes the profile's `parent_email`; confirm that instructors should be allowed to see it before treating that field as permanent API behavior.
+The roster response is a list containing student ID, username, first name, and last name. It omits the parent's email address.
 
 ## 9. Class reports and student feedback
 
@@ -251,10 +252,38 @@ These points describe current behavior and are useful to revisit as the project 
 
 1. `StudentFeedback` has no publish/draft status, so student feedback is visible to the student immediately.
 2. `ClassReport.written_on` is automatic. Instructors cannot provide a separate report date; filtering uses the creation date.
-3. The roster currently serializes `parent_email` to assigned instructors.
-4. The current email backend prints outgoing email to the terminal instead of delivering it.
-5. Browser requests from a separate frontend origin may require CORS/proxy configuration in addition to session cookies and CSRF.
+3. The development email backend prints outgoing email to the terminal instead of delivering it.
+4. Browser requests from a separate frontend origin may require CORS/proxy configuration in addition to session cookies and CSRF.
 6. Assignment removal currently uses `DELETE`; there is no active/inactive history field on `InstructorAssignment`.
 7. The backend has no explicit audit log for enrollment moves, assignment changes, or report publication yet.
+
+## 12. Environment, privacy, and deployment settings
+
+Settings read configuration from environment variables. The development defaults enable `DEBUG`, use SQLite, and print email to the console. Production must set `DJANGO_DEBUG=False`, a random private `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, and `DJANGO_CSRF_TRUSTED_ORIGINS`. With `DEBUG=False`, the app requires a secret key, uses secure session and CSRF cookies, enables HTTPS redirects and HSTS, and uses SMTP email. Serve the site behind HTTPS and configure the proxy to preserve the original HTTPS scheme before enabling the redirect. Never commit a real `.env` file or database credentials.
+
+Production environment variables include:
+
+```text
+DJANGO_DEBUG=False
+DJANGO_SECRET_KEY=<long random secret>
+DJANGO_ALLOWED_HOSTS=portal.example.com,api.example.com
+DJANGO_CSRF_TRUSTED_ORIGINS=https://portal.example.com
+DJANGO_TRUST_PROXY_SSL_HEADER=True
+FRONTEND_BASE_URL=https://portal.example.com
+EMAIL_HOST=<smtp host>
+EMAIL_PORT=587
+EMAIL_HOST_USER=<smtp username>
+EMAIL_HOST_PASSWORD=<smtp password>
+EMAIL_USE_TLS=True
+DEFAULT_FROM_EMAIL=Kiddies Droid Portal <no-reply@example.com>
+```
+
+Set `DJANGO_TRUST_PROXY_SSL_HEADER=True` only when a trusted reverse proxy strips any client-supplied `X-Forwarded-Proto` header and sets it itself. Keep `SECURE_HSTS_PRELOAD` disabled until the production domain and every subdomain are ready to remain HTTPS-only; enabling browser preload can be difficult to reverse.
+
+### MongoDB status
+
+The project has a MongoDB connection setting: `MONGODB_URI` and `MONGODB_NAME` select the official `django-mongodb-backend`; leaving `MONGODB_URI` blank keeps the existing SQLite database. The dependency is listed in `requirements.txt`. The project is **not ready to run against MongoDB yet**: its current models and committed migrations use Django `BigAutoField` integer IDs, which the official backend does not support. URLs, serializers, and frontend requests also assume numeric IDs. MongoDB adoption needs a planned primary-key and relation conversion to `ObjectIdAutoField`, compatible MongoDB migrations, and updates to every ID consumer before connecting production data. Do not set `MONGODB_URI` or run migrations against a production cluster until that conversion is completed and reviewed. SQLite records are not copied automatically when the database setting changes.
+
+The backend also uses relations and joins extensively. MongoDB supports `ForeignKey` with limitations, and cross-collection joins can be slower than relational joins. Keep the present SQLite database as the working development database until the MongoDB schema conversion is implemented. See MongoDB's [Django backend compatibility and limitations](https://www.mongodb.com/docs/languages/python/django-mongodb/current/limitations-upcoming/) and [connection configuration](https://www.mongodb.com/docs/languages/python/django-mongodb/current/connect/).
 
 These are implementation notes, not additional rules imposed by the frontend. Keep authorization and validation in the backend even when the UI also hides actions from users.

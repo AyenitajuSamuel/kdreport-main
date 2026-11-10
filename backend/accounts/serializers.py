@@ -50,6 +50,17 @@ class StudentProfileSerializer(serializers.ModelSerializer):
         return super().update(instance, validated_data)
 
 
+class ClassRosterStudentSerializer(serializers.ModelSerializer):
+    """Student details needed by assigned instructors, without parent contact data."""
+    first_name = serializers.CharField(source="user.first_name", read_only=True)
+    last_name = serializers.CharField(source="user.last_name", read_only=True)
+    username = serializers.CharField(source="user.username", read_only=True)
+
+    class Meta:
+        model = StudentProfile
+        fields = ["id", "username", "first_name", "last_name"]
+
+
 class InstructorProfileSerializer(serializers.ModelSerializer):
     first_name = serializers.CharField(source="user.first_name")
     last_name = serializers.CharField(source="user.last_name")
@@ -100,8 +111,8 @@ class StudentSelfProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = StudentProfile
-        fields = ["username", "first_name", "last_name", "parent_email"]
-        read_only_fields = ["first_name", "last_name", "parent_email"]
+        fields = ["username", "first_name", "last_name"]
+        read_only_fields = ["first_name", "last_name"]
 
     def validate(self, attrs):
         username = attrs.get("user", {}).get("username")

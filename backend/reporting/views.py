@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 
 from academics.models import Class, InstructorAssignment, StudentEnrollment
 from accounts.models import InstructorProfile
+from .email_utils import send_class_report_to_parents
 from .models import ClassReport, StudentFeedback
 from .serializers import ClassReportSerializer, StudentFeedbackSerializer
 
@@ -99,6 +100,7 @@ class ClassReportPublishView(APIView):
         report.status = ClassReport.Status.PUBLISHED
         report.published_on = timezone.now()
         report.save(update_fields=["status", "published_on"])
+        send_class_report_to_parents(report)
         return Response(ClassReportSerializer(report).data, status=status.HTTP_200_OK)
 
 

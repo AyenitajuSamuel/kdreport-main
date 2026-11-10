@@ -3,6 +3,7 @@ backend/**/*.py[cod]
 backend/**/$py.class
 backend/venv/
 backend/db.sqlite3
+backend/.env
 backend/static/
 backend/media/
 backend/staticfiles/

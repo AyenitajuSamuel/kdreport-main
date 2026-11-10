@@ -3,7 +3,7 @@ from rest_framework import generics, permissions
 from rest_framework.exceptions import PermissionDenied
 
 from accounts.models import StudentProfile
-from accounts.serializers import StudentProfileSerializer
+from accounts.serializers import ClassRosterStudentSerializer
 from . import models, serializers
 
 
@@ -110,7 +110,7 @@ class InstructorMyClassesView(generics.ListAPIView):
 
 
 class ClassRosterView(generics.ListAPIView):
-    serializer_class = StudentProfileSerializer
+    serializer_class = ClassRosterStudentSerializer
     permission_classes = [IsInstructorOrAdmin]
 
     def get_queryset(self):
@@ -124,3 +124,20 @@ class ClassRosterView(generics.ListAPIView):
         return StudentProfile.objects.filter(enrollments__classroom=classroom).select_related("user").distinct().order_by(
             "user__last_name", "user__first_name"
         )
+
+
+class ClassEnrollmentListView(generics.ListAPIView):
+    serializer_class = serializers.StudentEnrollmentSerializer
+    permission_classes = [IsInstructorOrAdmin]
+
+    def get_queryset(self):
+        classroom = get_object_or_404(models.Class, pk=self.kwargs["class_pk"])
+        user = self.request.user
+        is_admin = user.is_superuser or user.role == user.Role.ADMIN
+        if not is_admin and not models.InstructorAssignment.objects.filter(
+            instructor__user=user, classroom=classroom
+        ).exists():
+            raise PermissionDenied("You are not assigned to this class.")
+        return models.StudentEnrollment.objects.filter(classroom=classroom).select_related(
+            "student__user", "classroom", "program"
+        ).order_by("student__user__last_name", "student__user__first_name")

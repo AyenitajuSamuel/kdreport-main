@@ -18,9 +18,12 @@ class ClassSerializer(serializers.ModelSerializer):
 
 
 class StudentEnrollmentSerializer(serializers.ModelSerializer):
+    program_name = serializers.CharField(source="program.name", read_only=True)
+    class_name = serializers.CharField(source="classroom.name", read_only=True)
+
     class Meta:
         model = models.StudentEnrollment
-        fields = ["id", "student", "classroom", "program", "enrolled_on"]
+        fields = ["id", "student", "classroom", "class_name", "program", "program_name", "enrolled_on"]
         read_only_fields = ["id", "program", "enrolled_on"]
 
     def validate_classroom(self, classroom):
