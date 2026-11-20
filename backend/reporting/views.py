@@ -1,4 +1,5 @@
 from django.shortcuts import get_object_or_404
+from django.http import HttpResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from rest_framework import generics, permissions, status
@@ -8,7 +9,8 @@ from rest_framework.views import APIView
 
 from academics.models import Class, InstructorAssignment, StudentEnrollment
 from accounts.models import InstructorProfile
-from .email_utils import send_class_report_to_parents
+from .email_utils import build_parent_report_pdf, send_class_report_to_parents
+from .gemini import GeminiGenerationError, generate_personalized_report
 from .models import ClassReport, StudentFeedback
 from .serializers import ClassReportSerializer, StudentFeedbackSerializer
 
@@ -28,6 +30,29 @@ def ensure_assigned(user, classroom):
         instructor__user=user, classroom=classroom
     ).exists():
         raise PermissionDenied("You are not assigned to this class.")
+
+
+def generate_report_previews(report):
+    enrolled_ids = set(StudentEnrollment.objects.filter(classroom=report.classroom).values_list("id", flat=True))
+    completed_ids = set(report.student_feedback.values_list("enrollment_id", flat=True))
+    if enrolled_ids != completed_ids:
+        raise ValidationError({"student_feedback": "Complete private feedback for every enrolled student before generating previews."})
+    previews = []
+    for feedback in report.student_feedback.select_related("enrollment__student__user").all():
+        student = feedback.enrollment.student.user
+        student_name = student.get_full_name().strip() or student.username or "Student"
+        if not feedback.personalized_report or student_name.casefold() not in feedback.personalized_report.casefold():
+            try:
+                feedback.personalized_report = generate_personalized_report(report, feedback)
+            except GeminiGenerationError as error:
+                return None, str(error)
+            feedback.save(update_fields=["personalized_report"])
+        previews.append({
+            "enrollment_id": feedback.enrollment_id,
+            "student_name": student_name,
+            "personalized_report": feedback.personalized_report,
+        })
+    return previews, None
 
 
 class ClassReportListCreateView(generics.ListCreateAPIView):
@@ -78,8 +103,8 @@ class ClassReportDetailView(generics.RetrieveUpdateAPIView):
     def perform_update(self, serializer):
         report = self.get_object()
         ensure_assigned(self.request.user, report.classroom)
-        if report.status == ClassReport.Status.PUBLISHED and not is_admin(self.request.user):
-            raise PermissionDenied("Published reports cannot be edited by instructors.")
+        if report.status == ClassReport.Status.PUBLISHED:
+            raise PermissionDenied("Published reports cannot be edited. Create a new draft to send a correction.")
         serializer.save()
 
 
@@ -96,12 +121,64 @@ class ClassReportPublishView(APIView):
         report = get_object_or_404(queryset, pk=report_pk)
         ensure_assigned(request.user, report.classroom)
         if report.status == ClassReport.Status.PUBLISHED:
-            return Response(ClassReportSerializer(report).data)
+            delivery = send_class_report_to_parents(report)
+            payload = ClassReportSerializer(report).data
+            payload["delivery_attempt"] = delivery
+            return Response(payload)
+        _, generation_error = generate_report_previews(report)
+        if generation_error:
+            return Response({"detail": generation_error}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         report.status = ClassReport.Status.PUBLISHED
         report.published_on = timezone.now()
         report.save(update_fields=["status", "published_on"])
-        send_class_report_to_parents(report)
-        return Response(ClassReportSerializer(report).data, status=status.HTTP_200_OK)
+        delivery = send_class_report_to_parents(report)
+        payload = ClassReportSerializer(report).data
+        payload["delivery_attempt"] = delivery
+        return Response(payload, status=status.HTTP_200_OK)
+
+
+class ClassReportPreviewView(APIView):
+    permission_classes = [IsInstructorOrAdmin]
+
+    def post(self, request, report_pk):
+        queryset = ClassReport.objects.select_related("author__user", "classroom")
+        if not is_admin(request.user):
+            queryset = queryset.filter(
+                author__user=request.user,
+                classroom__instructor_assignment__instructor__user=request.user,
+            )
+        report = get_object_or_404(queryset, pk=report_pk)
+        ensure_assigned(request.user, report.classroom)
+        if report.status != ClassReport.Status.DRAFT:
+            raise ValidationError({"detail": "Only draft reports can generate a preview."})
+        previews, generation_error = generate_report_previews(report)
+        if generation_error:
+            return Response({"detail": generation_error}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({"report_id": report.pk, "students": previews})
+
+
+class ClassReportPdfPreviewView(APIView):
+    permission_classes = [IsInstructorOrAdmin]
+
+    def get(self, request, report_pk, enrollment_pk):
+        queryset = ClassReport.objects.select_related("author__user", "classroom__program")
+        if not is_admin(request.user):
+            queryset = queryset.filter(
+                author__user=request.user,
+                classroom__instructor_assignment__instructor__user=request.user,
+            )
+        report = get_object_or_404(queryset, pk=report_pk)
+        ensure_assigned(request.user, report.classroom)
+        feedback = get_object_or_404(
+            report.student_feedback.select_related("enrollment__student__user"),
+            enrollment_id=enrollment_pk,
+        )
+        if not feedback.personalized_report:
+            raise ValidationError({"detail": "Generate the report preview before opening its PDF."})
+        pdf_content, filename = build_parent_report_pdf(report, feedback)
+        response = HttpResponse(pdf_content, content_type="application/pdf")
+        response["Content-Disposition"] = f'inline; filename="{filename}"'
+        return response
 
 
 class EnrollmentFeedbackListCreateView(generics.ListCreateAPIView):

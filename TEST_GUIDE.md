@@ -125,26 +125,24 @@ Suggested disposable records:
 
 ### Write and publish a class report
 
-1. Open **Class reports**.
-2. Choose **New report**, select an assigned class, enter a title and report text, and save the draft.
-3. Confirm the draft appears with draft status.
-4. Select **Publish** for the draft.
-5. Confirm the report status changes to published and a publication date is shown.
-6. Sign in as a student enrolled in that class and verify the report appears under the correct program.
+1. Open the instructor **Class report & feedback** tab.
+2. Choose **New report**, select an assigned class, and enter the topic, learning goals, key concepts and skills, activities, practical work/project, assignment and due date, and any next lesson or materials.
+3. Confirm every student starts with the positive/default answers. Choose **Add private feedback**, select a student, then change any answer that differs; optionally add a specific example, strength, or next step.
+4. Confirm all roster students are included in the saved report even when only some students' answers were changed.
+5. Save the draft, confirm it appears with draft status, then publish it.
+6. Confirm the report status changes to published and a publication date is shown.
+7. Confirm each parent receives a PDF with the expanded class content and only their child's answers and note.
+8. Sign in as a student enrolled in that class and verify the structured report and their own feedback appear under the correct program.
 
 Current limitation: the report date is assigned automatically when the report is created. The instructor cannot choose a different written date in the current UI/API.
 
-### Write student feedback
+### Private feedback
 
-1. Open the instructor **Private feedback** tab.
-2. Choose an assigned class and an enrolled student.
-3. Enter feedback and select **Save private feedback**.
-4. Confirm the success message appears and the new feedback appears in that student's feedback history.
-5. Sign in as the student and confirm the feedback appears under the program that contains the enrollment.
-
-The instructor can also open **My classes**, expand an assigned class roster, and use **Write feedback** beside a student.
-
-Feedback is visible to the student immediately after it is saved; there is currently no draft/publish step for feedback.
+1. Confirm there is no separate instructor Private feedback tab; the questionnaire appears at the bottom of the class report composer.
+2. Confirm the student questionnaire is generated from the selected class roster and feedback is attached to the class report.
+3. Try publishing a report when a student is missing feedback through the API; confirm publishing is rejected.
+4. Configure `GEMINI_API_KEY`, save a draft, and confirm Gemini previews one report per student before publishing.
+5. Publish the draft and confirm each student's parent PDF contains only that student's generated report and private answers.
 
 ## 6. Student navigation, reports, and feedback
 
@@ -154,7 +152,7 @@ Feedback is visible to the student immediately after it is saved; there is curre
 4. On **My learning**, confirm the upcoming-program banner, summary counts, and enrolled programs appear.
 5. Open **Class Reports** and **Private feedback** separately. If the student has multiple programs, select each program and confirm only its reports or feedback appear.
 6. On **Class Reports**, confirm each report title has a **Read** button. Open one and verify the full report appears on its own page; use **Back to Class Reports** to return.
-7. On **Private feedback**, confirm each item's full text, author, and date appear directly in the list.
+7. On **Private feedback**, confirm the student's own question answers and optional note appear, with no other student's answers.
 8. Confirm records from other programs do not appear in the selected program.
 9. If the student has no enrollments, confirm the empty-state message appears rather than a broken page.
 

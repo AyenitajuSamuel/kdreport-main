@@ -5,6 +5,17 @@ function csrfToken() {
   return entry ? decodeURIComponent(entry.slice("csrftoken=".length)) : "";
 }
 
+function formatValidationErrors(value, path = "") {
+  if (Array.isArray(value)) return value.flatMap((item, index) => formatValidationErrors(item, path || String(index)));
+  if (value && typeof value === "object") {
+    return Object.entries(value).flatMap(([key, nested]) => {
+      const nextPath = path ? `${path}.${key}` : key;
+      return formatValidationErrors(nested, nextPath);
+    });
+  }
+  return [`${path}: ${value}`];
+}
+
 async function responseData(response) {
   const raw = await response.text();
   let data = null;
@@ -17,7 +28,7 @@ async function responseData(response) {
     const details = data && typeof data === "object"
       ? Object.entries(data)
           .filter(([key]) => key !== "detail")
-          .flatMap(([key, value]) => (Array.isArray(value) ? value : [value]).map((item) => `${key}: ${item}`))
+          .flatMap(([key, value]) => formatValidationErrors(value, key))
           .join(" ")
       : "";
     const message = [data?.detail || `Request failed (${response.status}).`, details].filter(Boolean).join(" ");

@@ -1,0 +1,43 @@
+services:
+  - type: web
+    name: kdreport-presentation
+    runtime: python
+    plan: free
+    buildCommand: ./build.sh
+    startCommand: python backend/manage.py migrate --noinput && python -m gunicorn backend.wsgi:application --bind 0.0.0.0:$PORT
+    healthCheckPath: /
+    envVars:
+      - key: DJANGO_DEBUG
+        value: "false"
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DJANGO_ALLOWED_HOSTS
+        value: kdreport-presentation.onrender.com
+      - key: DJANGO_CSRF_TRUSTED_ORIGINS
+        value: https://kdreport-presentation.onrender.com
+      - key: DJANGO_TRUST_PROXY_SSL_HEADER
+        value: "true"
+      - key: POSTGRES_DB
+        fromDatabase:
+          name: kdreport-presentation-db
+          property: database
+      - key: POSTGRES_USER
+        fromDatabase:
+          name: kdreport-presentation-db
+          property: user
+      - key: POSTGRES_PASSWORD
+        fromDatabase:
+          name: kdreport-presentation-db
+          property: password
+      - key: POSTGRES_HOST
+        fromDatabase:
+          name: kdreport-presentation-db
+          property: host
+      - key: POSTGRES_PORT
+        fromDatabase:
+          name: kdreport-presentation-db
+          property: port
+
+databases:
+  - name: kdreport-presentation-db
+    plan: free

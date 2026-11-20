@@ -309,13 +309,31 @@ class StudentMyReportsView(generics.ListAPIView):
         if request.user.role != request.user.Role.STUDENT:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("This endpoint is for student accounts.")
-        from reporting.models import ClassReport
-        from reporting.serializers import ClassReportSerializer
+        from reporting.models import ClassReport, StudentFeedback
         reports = ClassReport.objects.filter(
             classroom__enrollments__student__user=request.user,
             status=ClassReport.Status.PUBLISHED,
         ).select_related("classroom", "author__user").distinct().order_by("-published_on")
-        return Response(ClassReportSerializer(reports, many=True).data)
+        personalized_reports = {
+            feedback.report_id: feedback.personalized_report
+            for feedback in StudentFeedback.objects.filter(
+                report__in=reports,
+                enrollment__student__user=request.user,
+            )
+        }
+        return Response([
+            {
+                "id": report.pk,
+                "classroom": report.classroom_id,
+                "class_name": report.classroom.name,
+                "author_name": report.author.user.get_full_name(),
+                "title": report.title,
+                "display_title": report.title or "KiddiesDroid Report",
+                "personalized_report": personalized_reports.get(report.pk, ""),
+                "published_on": report.published_on,
+            }
+            for report in reports
+        ])
 
 
 class StudentMyFeedbackView(generics.ListAPIView):

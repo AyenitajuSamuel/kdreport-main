@@ -14,8 +14,19 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
+from django.conf import settings
 from django.contrib import admin
-from django.urls import path, include
+from django.http import FileResponse, Http404
+from django.urls import path, include, re_path
+
+
+def frontend(request, path=""):
+    index_path = settings.BASE_DIR.parent / "frontend" / "dist" / "index.html"
+    if not index_path.is_file():
+        raise Http404("Frontend build is missing.")
+    return FileResponse(index_path.open("rb"), content_type="text/html")
+
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/v1/auth/', include("accounts.urls")),
@@ -23,4 +34,5 @@ urlpatterns = [
     path('api/v1/', include("academics.api_urls")),
     path('api/v1/academics/', include("academics.urls")),
     path('api/v1/', include("reporting.urls")),
+    re_path(r"^(?!api/|admin/|static/).*$", frontend),
 ]

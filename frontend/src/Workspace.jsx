@@ -1,8 +1,32 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import logoUrl from "./assets/KIDDIES DROID-LOGO.png";
-import { request } from "./api.js";
+import { apiPath, request } from "./api.js";
 
 const PROGRAMS = "/academics/program/";
+
+const STUDENT_FEEDBACK_QUESTIONS = [
+  { key: "attendance_status", question: "Attendance", options: [["not_assessed", "Not assessed"], ["on_time", "Present and on time"], ["late", "Arrived late"], ["absent_with_notice", "Absent with notice"], ["absent_without_notice", "Absent without notice"]] },
+  { key: "participation", question: "Participation", options: [["independent_contribution", "Contributed independently"], ["when_prompted", "Participated when prompted"], ["limited_observed", "Limited participation observed"], ["not_assessed", "Not assessed"]] },
+  { key: "understanding", question: "Understanding of today’s learning goals", options: [["demonstrated", "Demonstrated understanding"], ["developing", "Understanding is developing"], ["needs_practice", "Needs more practice"], ["not_assessed", "Not assessed"]] },
+  { key: "practical_work", question: "Practical work or project", options: [["not_assessed", "Not assessed"], ["completed_independently", "Completed independently"], ["completed_with_support", "Completed with support"], ["partially_completed", "Partially completed"], ["not_attempted", "Not attempted"], ["not_applicable", "Not applicable"]] },
+  { key: "assignment_status", question: "Assignment status", options: [["not_assessed", "Not assessed"], ["completed", "Completed"], ["partially_completed", "Partially completed"], ["not_submitted", "Not submitted"], ["not_yet_due", "Not yet due"], ["no_assignment", "No assignment"]] },
+  { key: "collaboration", question: "Collaboration", options: [["worked_well", "Worked well with others"], ["some_support", "Needed some support"], ["needed_reminders", "Needed reminders"], ["not_assessed", "Not assessed"]] },
+];
+
+function feedbackAnswerLabel(question, value) {
+  return question.options.find(([option]) => option === value)?.[1] || value;
+}
+
+function defaultFeedbackAnswers() {
+  return {
+    attendance_status: "not_assessed",
+    participation: "not_assessed",
+    understanding: "not_assessed",
+    practical_work: "not_assessed",
+    assignment_status: "not_assessed",
+    collaboration: "not_assessed",
+  };
+}
 
 function Icon({ name, size = 18 }) {
   const common = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true };
@@ -289,7 +313,7 @@ function StudentList({ activeProgram, programs, onStudentsChanged, onManage }) {
     for (const enrollment of data?.enrollments || []) {
       const room = data?.classes?.find((item) => String(item.id) === String(enrollment.classroom));
       const names = result.get(String(enrollment.student)) || [];
-      names.push(room?.name || `Class #${enrollment.classroom}`);
+      names.push(room?.name || "Class");
       result.set(String(enrollment.student), names);
     }
     return result;
@@ -465,22 +489,121 @@ function ReportsPage({ program, user, instructorClasses = null }) {
     }));
     return rows.flat().sort((a, b) => new Date(b.written_on) - new Date(a.written_on));
   }, [classes.map((item) => item.id).join(",")]);
-  const [form, setForm] = useState(false); const [saving, setSaving] = useState(false); const [errorMessage, setErrorMessage] = useState("");
-  async function createReport(event) {
-    event.preventDefault(); const values = new FormData(event.currentTarget); setSaving(true); setErrorMessage("");
-    try { const classroom = values.get("classroom"); await request(`/classes/${classroom}/reports/`, { method: "POST", data: { title: String(values.get("title")).trim(), body: String(values.get("body")).trim() } }); setForm(false); reportState.reload(); }
-    catch (caught) { setErrorMessage(caught.message); } finally { setSaving(false); }
-  }
+  const [editingReport, setEditingReport] = useState(null);
+  const [form, setForm] = useState(false); const [saving, setSaving] = useState(false); const [errorMessage, setErrorMessage] = useState(""); const [successMessage, setSuccessMessage] = useState("");
   async function publishReport(reportId) {
-    setSaving(true); setErrorMessage("");
-    try { await request(`/class-reports/${reportId}/publish/`, { method: "POST", data: {} }); reportState.reload(); }
-    catch (caught) { setErrorMessage(caught.message); } finally { setSaving(false); }
+    setSaving(true); setErrorMessage(""); setSuccessMessage("");
+    try {
+      const result = await request(`/class-reports/${reportId}/publish/`, { method: "POST", data: {} });
+      reportState.reload();
+      const delivery = result.delivery_attempt;
+      setSuccessMessage(delivery ? `Report published. Email delivery: ${delivery.sent} sent, ${delivery.failed} failed, ${delivery.skipped} skipped.` : "Report published and parent emails were queued.");
+      return result;
+    } catch (caught) { setErrorMessage(caught.message); return null; }
+    finally { setSaving(false); }
   }
   const reports = reportState.data || [];
-  return <><PageHeading title="Class reports" description={`Drafts and published reports for ${program.name}. Students see reports after an instructor publishes them.`} action={!admin && <Button icon="plus" onClick={() => setForm((value) => !value)}>New report</Button>}/><Feedback error={errorMessage || classesState.error || reportState.error}/>
-    {form && <Panel className="form-panel"><h3>Write a class report</h3><form className="form-grid" onSubmit={createReport}><label>Class<select name="classroom" required defaultValue=""><option value="" disabled>Select a class</option>{classes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>Title<input name="title" maxLength="50" required placeholder="Weekly learning update"/></label><label className="form-span">Report<textarea name="body" maxLength="1000" rows="5" required placeholder="Describe the learning activities and progress…"/></label><div className="form-actions"><Button disabled={saving}>{saving ? "Saving…" : "Save draft"}</Button><Button type="button" variant="secondary" onClick={() => setForm(false)}>Cancel</Button></div></form><p className="form-help">Saving creates a draft. Publish it from the reports list when it is ready.</p></Panel>}
-    {classesState.loading || reportState.loading ? <Loading>Loading reports…</Loading> : reports.length ? <Panel className="table-panel"><Table headers={["Report", "Class", "Author", "Written", "Status", "Action"]}>{reports.map((report) => <tr key={report.id}><td><strong>{report.title}</strong><small className="report-preview">{report.body}</small></td><td>{report.classLabel}</td><td>{report.author_name || "Instructor"}</td><td>{new Date(report.written_on).toLocaleDateString()}</td><td><span className={`status-pill status-${report.status}`}>{report.status}</span></td><td>{report.status === "draft" && !admin ? <Button variant="secondary" disabled={saving} onClick={() => publishReport(report.id)}>Publish</Button> : report.published_on ? new Date(report.published_on).toLocaleDateString() : "—"}</td></tr>)}</Table></Panel> : <Empty title="No reports yet">Create a draft report for one of this program's classes.</Empty>}
+  return <><PageHeading title="Class reports" description={`Structured class updates and student feedback for ${program.name}. Each report includes private answers for every enrolled student.`} action={!admin && <Button icon="plus" onClick={() => { setEditingReport(null); setForm((value) => !value); setErrorMessage(""); }}>New report</Button>}/><Feedback error={errorMessage || classesState.error || reportState.error} success={successMessage}/>
+    {form && <ClassReportComposer key={editingReport?.id || "new"} classes={classes} initialReport={editingReport} saving={saving} setSaving={setSaving} onCancel={() => { setForm(false); setEditingReport(null); }} onSaved={() => reportState.reload()} onError={setErrorMessage} onPublish={publishReport}/>}
+    {classesState.loading || reportState.loading ? <Loading>Loading reports…</Loading> : reports.length ? <Panel className="table-panel"><Table headers={["Report", "Class", "Author", "Written", "Status", "Email delivery", "Action"]}>{reports.map((report) => {
+      const delivery = report.email_delivery || {};
+      const canRetry = report.status === "published" && (delivery.failed > 0 || delivery.pending > 0 || delivery.skipped > 0);
+      return <tr key={report.id}><td><strong>{report.display_title || report.title || "Class learning report"}</strong><small className="report-preview">{report.reporting_period || report.topic_taught || "Class report"}</small></td><td>{report.classLabel}</td><td>{report.author_name || "Instructor"}</td><td>{new Date(report.written_on).toLocaleDateString()}</td><td><span className={`status-pill status-${report.status}`}>{report.status}</span></td><td>{delivery.total ? `${delivery.sent}/${delivery.total} sent · ${delivery.failed} failed · ${delivery.skipped} skipped` : report.status === "draft" ? "Not sent" : "No delivery records"}</td><td>{report.status === "draft" && !admin ? <Button variant="secondary" disabled={saving} onClick={() => { setEditingReport(report); setForm(true); setSuccessMessage(""); }}>Review / edit</Button> : canRetry ? <Button variant="secondary" disabled={saving} onClick={() => publishReport(report.id)}>Retry email</Button> : report.published_on ? new Date(report.published_on).toLocaleDateString() : "—"}</td></tr>;
+    })}</Table></Panel> : <Empty title="No reports yet">Create a class update and complete private feedback for its enrolled students.</Empty>}
   </>;
+}
+
+function ClassReportComposer({ classes, initialReport = null, saving, setSaving, onCancel, onSaved, onError, onPublish }) {
+  const [classroomId, setClassroomId] = useState(String(initialReport?.classroom || ""));
+  const enrollmentsState = useLoad("class enrollments", (signal) => classroomId ? request(`/classes/${classroomId}/enrollments/`, { signal }) : Promise.resolve([]), [classroomId]);
+  const initialEntries = initialReport?.feedback_entries || [];
+  const [answers, setAnswers] = useState(() => Object.fromEntries(initialEntries.map((entry) => [entry.enrollment, entry.answers || {}])));
+  const [notes, setNotes] = useState(() => Object.fromEntries(initialEntries.map((entry) => [entry.enrollment, entry.note || ""])));
+  const [feedbackStudentIds, setFeedbackStudentIds] = useState(() => initialEntries
+    .filter((entry) => entry.note || Object.values(entry.answers || {}).some((value) => value !== "not_assessed"))
+    .map((entry) => String(entry.enrollment)));
+  const [showFeedbackStudentPicker, setShowFeedbackStudentPicker] = useState(false);
+  const [reportFields, setReportFields] = useState({ practical_works: initialReport?.practical_works || "", assignment: initialReport?.assignment || "", assignment_due_date: initialReport?.assignment_due_date || "" });
+  const [reportId, setReportId] = useState(initialReport?.id || null);
+  const [previews, setPreviews] = useState(null);
+  const [isEditing, setIsEditing] = useState(!initialReport);
+  const initialClassroomId = useRef(classroomId);
+  useEffect(() => {
+    if (initialClassroomId.current === classroomId) return;
+    initialClassroomId.current = classroomId;
+    setAnswers({}); setNotes({}); setFeedbackStudentIds([]); setShowFeedbackStudentPicker(false);
+    setReportFields({ practical_works: "", assignment: "", assignment_due_date: "" }); setPreviews(null);
+  }, [classroomId]);
+  const enrollments = enrollmentsState.data || [];
+  const defaults = defaultFeedbackAnswers();
+  const feedbackStudents = feedbackStudentIds.map((id) => enrollments.find((entry) => String(entry.id) === String(id))).filter(Boolean);
+  const availableStudents = enrollments.filter((entry) => !feedbackStudentIds.some((id) => String(id) === String(entry.id)));
+  const answersFor = (entry) => ({ ...defaults, ...answers[entry.id] });
+  function removeStudentFeedback(studentId) {
+    setFeedbackStudentIds((current) => current.filter((id) => String(id) !== String(studentId)));
+    setAnswers((current) => { const next = { ...current }; delete next[studentId]; return next; });
+    setNotes((current) => { const next = { ...current }; delete next[studentId]; return next; });
+  }
+  async function submit(event) {
+    event.preventDefault(); setSaving(true); onError("");
+    try {
+      const values = new FormData(event.currentTarget);
+      const payload = {
+        title: String(values.get("title") || "").trim(),
+        reporting_period: String(values.get("reporting_period") || "").trim(),
+        topic_taught: String(values.get("topic_taught") || "").trim(),
+        learning_goals: String(values.get("learning_goals") || "").trim(),
+        key_concepts: String(values.get("key_concepts") || "").trim(),
+        activities: String(values.get("activities") || "").trim(),
+        practical_works: String(values.get("practical_works") || "").trim(),
+        assignment: String(values.get("assignment") || "").trim(),
+        assignment_due_date: values.get("assignment_due_date") || null,
+        next_lesson: String(values.get("next_lesson") || "").trim(),
+        materials: String(values.get("materials") || "").trim(),
+        student_feedback: enrollments
+          .filter((entry) => feedbackStudentIds.some((id) => String(id) === String(entry.id)))
+          .map((entry) => ({ enrollment: Number(entry.id), answers: answersFor(entry), note: notes[entry.id] || "" })),
+      };
+      let targetReportId = reportId;
+      if (!targetReportId) {
+        const report = await request(`/classes/${classroomId}/reports/`, { method: "POST", data: payload });
+        targetReportId = report.id; setReportId(targetReportId); onSaved();
+      } else if (isEditing) {
+        await request(`/class-reports/${targetReportId}/`, { method: "PATCH", data: payload });
+        onSaved();
+      }
+      const preview = await request(`/class-reports/${targetReportId}/preview/`, { method: "POST", data: {} });
+      setPreviews(preview.students || []); setIsEditing(false);
+    } catch (caught) { onError(caught.message); }
+    finally { setSaving(false); }
+  }
+  const nameFor = (entry) => entry.student_name || "Student";
+  return <Panel className="form-panel report-composer"><div className="panel-heading"><div><h3>{initialReport ? "Review class report draft" : "Class learning report"}</h3><p>Add a report title and lesson details. Gemini will turn these notes and each student’s feedback into a complete parent-facing report.</p></div></div>
+    <form className="form-grid" key={classroomId || "no-class"} onSubmit={submit}>
+      <label className="form-span">Class<select required disabled={Boolean(reportId) || !isEditing} value={classroomId} onChange={(event) => setClassroomId(event.target.value)}><option value="">Select a class</option>{classes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      <label className="form-span">Report title<input name="title" maxLength="50" required disabled={!isEditing} defaultValue={initialReport?.title || ""} placeholder="e.g. August Learning Report"/></label>
+      <label>Reporting period<input name="reporting_period" maxLength="50" disabled={!isEditing} defaultValue={initialReport?.reporting_period || ""} placeholder="e.g. August 2026"/></label>
+      <label className="form-span">Topic taught<input name="topic_taught" maxLength="500" required disabled={!isEditing} defaultValue={initialReport?.topic_taught || ""} placeholder="e.g. Introduction to robotics"/></label>
+      <label className="form-span">Learning goals<textarea name="learning_goals" maxLength="1000" rows="2" required disabled={!isEditing} defaultValue={initialReport?.learning_goals || ""} placeholder="What should students understand or be able to do?"/></label>
+      <label className="form-span">Key concepts and skills<textarea name="key_concepts" maxLength="1500" rows="3" required disabled={!isEditing} defaultValue={initialReport?.key_concepts || ""} placeholder="List the specific ideas or skills covered"/></label>
+      <label className="form-span">Activities<textarea name="activities" maxLength="1000" rows="3" required disabled={!isEditing} defaultValue={initialReport?.activities || ""} placeholder="What did the class do today?"/></label>
+      <label className="form-span">Practical work / project<textarea name="practical_works" maxLength="1000" rows="3" disabled={!isEditing} value={reportFields.practical_works} onChange={(event) => setReportFields((current) => ({ ...current, practical_works: event.target.value }))} placeholder="Describe the practical work or project"/></label>
+      <label>Assignment<textarea name="assignment" maxLength="1000" rows="3" disabled={!isEditing} value={reportFields.assignment} onChange={(event) => setReportFields((current) => ({ ...current, assignment: event.target.value }))} placeholder="What should students work on?"/></label>
+      <label>Assignment due date<input name="assignment_due_date" type="date" disabled={!isEditing} value={reportFields.assignment_due_date} onChange={(event) => setReportFields((current) => ({ ...current, assignment_due_date: event.target.value }))}/></label>
+      <label>Next lesson or follow-up<textarea name="next_lesson" maxLength="1000" rows="2" disabled={!isEditing} defaultValue={initialReport?.next_lesson || ""} placeholder="What will the class build on next?"/></label>
+      <label>Materials or resources<textarea name="materials" maxLength="1000" rows="2" disabled={!isEditing} defaultValue={initialReport?.materials || ""} placeholder="Optional links, tools, or learning materials"/></label>
+      {classroomId && <div className="form-span private-question-list"><div className="section-heading"><div><p className="eyebrow">Private feedback</p><h3>Individual adjustments</h3></div>{isEditing && !enrollmentsState.loading && availableStudents.length > 0 && <Button type="button" variant="secondary" onClick={() => setShowFeedbackStudentPicker((current) => !current)}>{showFeedbackStudentPicker ? "Cancel" : "Add private feedback"}</Button>}</div>
+        {enrollmentsState.loading ? <Loading>Loading enrolled students…</Loading> : enrollmentsState.error ? <Feedback error={enrollmentsState.error}/> : enrollments.length ? <>
+          <p className="form-help">The class report is used for every student by default. Select only students who need individual observations or a private note.</p>
+          {showFeedbackStudentPicker && <div className="feedback-student-picker"><label htmlFor="private-feedback-student">Choose a student<select id="private-feedback-student" value="" onChange={(event) => { if (event.target.value) { setFeedbackStudentIds((current) => [...current, event.target.value]); setShowFeedbackStudentPicker(false); } }}><option value="">Select a student</option>{availableStudents.map((entry) => <option key={entry.id} value={entry.id}>{nameFor(entry)}</option>)}</select></label></div>}
+          {feedbackStudents.length ? <div className="individual-feedback-grid">{feedbackStudents.map((student) => <article className="student-question-card selected-student-feedback" key={student.id}><div className="selected-student-heading"><div><p className="eyebrow">Private feedback</p><h4>{nameFor(student)}</h4></div>{isEditing && <Button type="button" variant="secondary" onClick={() => removeStudentFeedback(student.id)}>Remove</Button>}</div><div className="feedback-question-grid">{STUDENT_FEEDBACK_QUESTIONS.map(({ key, question, options }) => <fieldset className="radio-question" key={key}><legend>{question}</legend>{options.map(([value, label]) => <label key={value}><input type="radio" disabled={!isEditing} name={`${student.id}-${key}`} checked={answersFor(student)[key] === value} onChange={() => setAnswers((current) => ({ ...current, [student.id]: { ...current[student.id], [key]: value } }))}/> {label}</label>)}</fieldset>)}</div><label className="private-note-label">Optional example, strength, or next step<textarea rows="2" maxLength="500" disabled={!isEditing} value={notes[student.id] || ""} onChange={(event) => setNotes((current) => ({ ...current, [student.id]: event.target.value }))} placeholder="Add one specific observation that will help the parent understand the student's progress"/></label></article>)}</div> : <p className="form-help">No individual feedback selected. The class report will be used for every student.</p>}
+        </> : <p className="form-help">No students are enrolled in this class yet.</p>}
+      </div>}
+      {isEditing && <div className="form-actions"><Button disabled={saving || !classroomId || enrollmentsState.loading || !enrollments.length}>{saving ? (reportId ? "Saving and previewing…" : "Saving and previewing…") : reportId ? "Save changes and preview" : "Save draft and preview"}</Button><Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button></div>}
+    </form>
+    <p className="form-help">Only selected students receive individual observations; everyone else gets a report based on the shared class details. Gemini writes the narrative and the PDF won’t repeat the form fields. Review each preview before publishing.</p>
+    {previews && <section className="generated-preview"><div className="section-heading"><div><p className="eyebrow">Gemini preview</p><h3>Review each student’s report</h3></div><span className="count-badge">{previews.length}</span></div>{previews.map((preview) => <article className="generated-preview-card" key={preview.enrollment_id}><h4>{preview.student_name}</h4><p>{preview.personalized_report}</p><Button type="button" variant="secondary" onClick={() => window.open(apiPath(`/class-reports/${reportId}/pdf-preview/${preview.enrollment_id}/`), "_blank", "noopener,noreferrer")}>Preview PDF</Button></article>)}<div className="form-actions"><Button type="button" variant="secondary" disabled={saving} onClick={() => { setIsEditing(true); setPreviews(null); }}>Edit draft</Button><Button disabled={saving} onClick={async () => { const result = await onPublish(reportId); if (result) onCancel(); }}>{saving ? "Publishing…" : "Publish & email parents"}</Button><Button type="button" variant="secondary" onClick={onCancel}>Close</Button></div></section>}
+  </Panel>;
 }
 
 function StudentPortal({ page, reportId, navigate }) {
@@ -490,7 +613,7 @@ function StudentPortal({ page, reportId, navigate }) {
   const [selectedProgramId, setSelectedProgramId] = useState("");
   const busy = enrollments.loading || reports.loading || feedback.loading;
   const error = enrollments.error || reports.error || feedback.error;
-  const enrolledPrograms = [...new Map((enrollments.data || []).map((item) => [String(item.program), { id: item.program, name: item.program_name || `Program #${item.program}` }])).values()];
+  const enrolledPrograms = [...new Map((enrollments.data || []).map((item) => [String(item.program), { id: item.program, name: item.program_name || "Program" }])).values()];
   const selectedProgram = enrolledPrograms.find((item) => String(item.id) === String(selectedProgramId)) || enrolledPrograms[0] || null;
   const programEnrollments = selectedProgram ? (enrollments.data || []).filter((item) => String(item.program) === String(selectedProgram.id)) : [];
   const classIds = new Set(programEnrollments.map((item) => String(item.classroom)));
@@ -501,12 +624,12 @@ function StudentPortal({ page, reportId, navigate }) {
   const programTabs = <div className="tab-row program-tabs" role="tablist" aria-label="Your programs">
     {enrolledPrograms.map((program) => <button key={program.id} role="tab" aria-selected={String(selectedProgram?.id) === String(program.id)} onClick={() => setSelectedProgramId(String(program.id))}>{program.name}</button>)}
   </div>;
-  const classNote = <div className="program-class-note">{programEnrollments.map((item) => item.class_name || `Class #${item.classroom}`).join(" · ")}</div>;
+  const classNote = <div className="program-class-note">{programEnrollments.map((item) => item.class_name || "Class").join(" · ")}</div>;
   if (page === "student-report-detail") {
     return <>
-      <PageHeading title={selectedReport?.title || "Class report"} description="Published class report" action={<Button variant="secondary" onClick={() => navigate("/app/student-reports")}>Back to Class Reports</Button>}/>
+      <PageHeading title={selectedReport?.display_title || selectedReport?.title || "Class report"} description="Published class report" action={<Button variant="secondary" onClick={() => navigate("/app/student-reports")}>Back to Class Reports</Button>}/>
       {reports.error && <Feedback error={reports.error}/>}
-      {reports.loading ? <Loading>Loading report…</Loading> : selectedReport ? <Panel className="student-report-detail"><div className="report-card-meta"><span className="status-pill status-published">Published</span><time>{selectedReport.published_on ? new Date(selectedReport.published_on).toLocaleDateString() : ""}</time></div><p className="student-report-body">{selectedReport.body}</p><div className="student-report-author">{selectedReport.class_name || "Class"} · {selectedReport.author_name || "Instructor"}</div></Panel> : <Empty title="Report not found">This report is unavailable or is not published for your enrollments.</Empty>}
+      {reports.loading ? <Loading>Loading report…</Loading> : selectedReport ? <Panel className="student-report-detail"><div className="report-card-meta"><span className="status-pill status-published">Published</span><time>{selectedReport.published_on ? new Date(selectedReport.published_on).toLocaleDateString() : ""}</time></div><h3>{selectedReport.title || "KiddiesDroid Report"}</h3><ReportSection label="Progress report" value={selectedReport.personalized_report}/><div className="student-report-author">{selectedReport.class_name || "Class"} · {selectedReport.author_name || "Instructor"}</div></Panel> : <Empty title="Report not found">This report is unavailable or is not published for your enrollments.</Empty>}
     </>;
   }
   return <>
@@ -530,12 +653,17 @@ function StudentPortal({ page, reportId, navigate }) {
     </> : busy ? <Loading>Loading your records…</Loading> : selectedProgram ? <>
       {enrolledPrograms.length > 1 && programTabs}
       {page === "student-reports" && classNote}
-      {page === "student-reports" ? <div className="student-report-list">{programReports.map((item) => <Panel key={item.id} className="student-report-row"><div><h3>{item.title}</h3><small>{item.class_name || "Class"} · {item.published_on ? new Date(item.published_on).toLocaleDateString() : "Published"}</small></div><Button variant="secondary" onClick={() => navigate(`/app/student-reports/${item.id}`)}>Read</Button></Panel>)}{!programReports.length && <Empty title="No published reports for this program">Published class reports will appear here.</Empty>}</div> : <div className="report-cards student-feedback-list">{programFeedback.map((item) => {
+      {page === "student-reports" ? <div className="student-report-list">{programReports.map((item) => <Panel key={item.id} className="student-report-row"><div><h3>{item.display_title || item.title || "Class learning report"}</h3><small>{item.class_name || "Class"} · {item.published_on ? new Date(item.published_on).toLocaleDateString() : "Published"}</small></div><Button variant="secondary" onClick={() => navigate(`/app/student-reports/${item.id}`)}>Read</Button></Panel>)}{!programReports.length && <Empty title="No published reports for this program">Published class reports will appear here.</Empty>}</div> : <div className="report-cards student-feedback-list">{programFeedback.map((item) => {
         const enrollment = programEnrollments.find((entry) => String(entry.id) === String(item.enrollment));
-        return <Panel key={item.id}><div className="report-card-meta"><span className="status-pill status-active">Private feedback</span><time>{new Date(item.written_on).toLocaleDateString()}</time></div><p>{item.feedback}</p><small>From {item.author_name || "your instructor"}{enrollment ? ` · ${enrollment.class_name || `Class #${enrollment.classroom}`}` : ""}</small></Panel>;
+        return <Panel key={item.id}><div className="report-card-meta"><span className="status-pill status-active">Private feedback</span><time>{new Date(item.written_on).toLocaleDateString()}</time></div>{item.personalized_report && <p>{item.personalized_report}</p>}{STUDENT_FEEDBACK_QUESTIONS.map(({ key, question }) => item.answers?.[key] && <p key={key}>{question}: <strong>{feedbackAnswerLabel(STUDENT_FEEDBACK_QUESTIONS.find((entry) => entry.key === key), item.answers[key])}</strong></p>)}{item.answers?.came_late && <p>Arrived late: <strong>{item.answers.came_late === "yes" ? "Yes" : "No"}</strong></p>}{item.answers?.did_assignment && <p>Assignment completed: <strong>{item.answers.did_assignment === "yes" ? "Yes" : "No"}</strong></p>}{item.note && <p>{item.note}</p>}{item.feedback && <p>{item.feedback}</p>}<small>From {item.author_name || "your instructor"}{enrollment ? ` · ${enrollment.class_name || "Class"}` : ""}</small></Panel>;
       })}{!programFeedback.length && <Empty title="No private feedback for this program">Private feedback from your instructors will appear here.</Empty>}</div>}
     </> : <Empty title="No programs yet">Your reports and private feedback will appear here after you are enrolled in a program.</Empty>}
   </>;
+}
+
+function ReportSection({ label, value }) {
+  if (!value) return null;
+  return <section className="report-content-section"><h3>{label}</h3><p>{value}</p></section>;
 }
 
 function InstructorWorkspace({ user, page }) {
@@ -546,79 +674,16 @@ function InstructorWorkspace({ user, page }) {
   if (page === "reports") {
     const selectedProgram = classes.find((item) => String(item.id) === selectedClassId)?.program;
     const compatible = classes.filter((item) => String(item.program) === String(selectedProgram));
-    return <>{classesState.error && <Feedback error={classesState.error}/>}<div className="filter-panel panel"><label>Program classes<select value={selectedClassId} onChange={(event) => setSelectedClassId(event.target.value)}>{classes.map((item) => <option key={item.id} value={item.id}>{item.name} · Program #{item.program}</option>)}</select></label></div>{selectedProgram ? <ReportsPage key={selectedProgram} program={{ id: selectedProgram, name: `Program #${selectedProgram}` }} user={user} instructorClasses={compatible}/> : classesState.loading ? <Loading>Loading assigned classes…</Loading> : <Empty title="No assigned classes">Ask an administrator to assign you to a class before writing reports.</Empty>}</>;
+    const selectedProgramName = classes.find((item) => String(item.program) === String(selectedProgram))?.program_name || "Selected program";
+    return <>{classesState.error && <Feedback error={classesState.error}/>}<div className="filter-panel panel"><label>Program classes<select value={selectedClassId} onChange={(event) => setSelectedClassId(event.target.value)}>{classes.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.program_name || "Program"}</option>)}</select></label></div>{selectedProgram ? <ReportsPage key={selectedProgram} program={{ id: selectedProgram, name: selectedProgramName }} user={user} instructorClasses={compatible}/> : classesState.loading ? <Loading>Loading assigned classes…</Loading> : <Empty title="No assigned classes">Ask an administrator to assign you to a class before writing reports.</Empty>}</>;
   }
   return <><PageHeading title="My classes" description="Your class assignments and current student rosters."/>{classesState.error && <Feedback error={classesState.error}/>}<div className="class-grid">{classes.map((item) => <InstructorClassCard key={item.id} classroom={item}/>)}</div>{!classesState.loading && classes.length === 0 && <Empty title="No assigned classes">An administrator must assign you to a class before the roster and report tools become available.</Empty>}{classesState.loading && <Loading>Loading assigned classes…</Loading>}</>;
 }
 
-function InstructorFeedbackPage() {
-  const classesState = useLoad("assigned classes", (signal) => request("/my/classes/", { signal }), []);
-  const classes = classesState.data || [];
-  const [selectedClassId, setSelectedClassId] = useState("");
-  const [selectedEnrollmentId, setSelectedEnrollmentId] = useState("");
-  const [feedbackText, setFeedbackText] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [formError, setFormError] = useState("");
-  const [successMessage, setSuccessMessage] = useState("");
-  useEffect(() => {
-    if (classes.length && !classes.some((item) => String(item.id) === selectedClassId)) setSelectedClassId(String(classes[0].id));
-  }, [classes, selectedClassId]);
-  const activeClass = classes.find((item) => String(item.id) === selectedClassId);
-  const enrollmentsState = useLoad("class enrollments", (signal) => activeClass ? request(`/classes/${activeClass.id}/enrollments/`, { signal }) : Promise.resolve([]), [activeClass?.id]);
-  const rosterState = useLoad("class roster", (signal) => activeClass ? request(`/classes/${activeClass.id}/students/`, { signal }) : Promise.resolve([]), [activeClass?.id]);
-  const enrollments = enrollmentsState.data || [];
-  const roster = rosterState.data || [];
-  useEffect(() => {
-    if (!enrollments.some((item) => String(item.id) === selectedEnrollmentId)) setSelectedEnrollmentId(enrollments.length ? String(enrollments[0].id) : "");
-  }, [enrollments, selectedEnrollmentId]);
-  const selectedEnrollment = enrollments.find((item) => String(item.id) === selectedEnrollmentId);
-  const selectedStudent = selectedEnrollment && roster.find((item) => String(item.id) === String(selectedEnrollment.student));
-  const feedbackState = useLoad("private feedback", (signal) => selectedEnrollment ? request(`/enrollments/${selectedEnrollment.id}/feedback/`, { signal }) : Promise.resolve([]), [selectedEnrollment?.id]);
-
-  async function submitFeedback(event) {
-    event.preventDefault();
-    if (!selectedEnrollment || !feedbackText.trim()) return;
-    setSaving(true); setFormError(""); setSuccessMessage("");
-    try {
-      await request(`/enrollments/${selectedEnrollment.id}/feedback/`, { method: "POST", data: { feedback: feedbackText.trim() } });
-      setFeedbackText("");
-      feedbackState.reload();
-      setSuccessMessage(`Private feedback saved for ${selectedStudent ? `${selectedStudent.first_name} ${selectedStudent.last_name}` : "this student"}.`);
-    } catch (error) { setFormError(error.message); }
-    finally { setSaving(false); }
-  }
-
-  const error = classesState.error || enrollmentsState.error || rosterState.error || feedbackState.error || formError;
-  return <>
-    <PageHeading title="Private feedback" description="Write feedback for a student in one of your assigned classes. Each student sees feedback for their own enrollment."/>
-    <Feedback error={error} success={successMessage}/>
-    {classesState.loading ? <Loading>Loading your classes…</Loading> : classes.length ? <>
-      <Panel className="form-panel"><form className="form-grid" onSubmit={submitFeedback}>
-        <label>Class<select value={selectedClassId} onChange={(event) => { setSelectedClassId(event.target.value); setSelectedEnrollmentId(""); setSuccessMessage(""); }} required><option value="" disabled>Select a class</option>{classes.map((item) => <option key={item.id} value={item.id}>{item.name} · Program #{item.program}</option>)}</select></label>
-        <label>Student<select value={selectedEnrollmentId} onChange={(event) => { setSelectedEnrollmentId(event.target.value); setSuccessMessage(""); }} disabled={enrollmentsState.loading || !enrollments.length} required><option value="" disabled>{enrollmentsState.loading ? "Loading students…" : "Select a student"}</option>{enrollments.map((item) => { const student = roster.find((record) => String(record.id) === String(item.student)); return <option key={item.id} value={item.id}>{student ? `${student.first_name} ${student.last_name}` : "Student"}</option>; })}</select></label>
-        <label className="form-span">Feedback<textarea rows="5" maxLength="500" required value={feedbackText} onChange={(event) => setFeedbackText(event.target.value)} placeholder="Write private feedback for this student…"/></label>
-        <div className="form-actions"><Button disabled={saving || !selectedEnrollment}>{saving ? "Saving…" : "Save private feedback"}</Button></div>
-      </form>
-      {!enrollmentsState.loading && !enrollments.length && <p className="form-help">There are no students enrolled in this class yet.</p>}
-      </Panel>
-      {selectedEnrollment && <section className="feedback-history"><div className="section-heading"><div><p className="eyebrow">Feedback history</p><h3>{selectedStudent ? `${selectedStudent.first_name} ${selectedStudent.last_name}` : "Selected student"}</h3></div><span className="count-badge">{feedbackState.data?.length ?? 0}</span></div>
-        {feedbackState.loading ? <Loading>Loading feedback…</Loading> : feedbackState.data?.length ? <div className="report-cards">{feedbackState.data.map((item) => <Panel key={item.id}><div className="report-card-meta"><span className="status-pill status-active">Private feedback</span><time>{new Date(item.written_on).toLocaleDateString()}</time></div><p>{item.feedback}</p></Panel>)}</div> : <Empty title="No feedback written yet">Feedback you write for this student will appear here.</Empty>}
-      </section>}
-    </> : <Empty title="No assigned classes">An administrator must assign you to a class before you can write student feedback.</Empty>}
-  </>;
-}
-
 function InstructorClassCard({ classroom }) {
   const roster = useLoad(`roster for ${classroom.name}`, (signal) => request(`/classes/${classroom.id}/students/`, { signal }), [classroom.id]);
-  const enrollments = useLoad(`enrollments for ${classroom.name}`, (signal) => request(`/classes/${classroom.id}/enrollments/`, { signal }), [classroom.id]);
   const [open, setOpen] = useState(false);
-  const [feedbackFor, setFeedbackFor] = useState(""); const [feedbackMessage, setFeedbackMessage] = useState(""); const [feedbackError, setFeedbackError] = useState(""); const [feedbackSuccess, setFeedbackSuccess] = useState(""); const [saving, setSaving] = useState(false);
-  async function submitFeedback(event, enrollmentId) {
-    event.preventDefault(); setSaving(true); setFeedbackError(""); setFeedbackSuccess("");
-    try { await request(`/enrollments/${enrollmentId}/feedback/`, { method: "POST", data: { feedback: feedbackMessage.trim() } }); setFeedbackMessage(""); setFeedbackFor(""); setFeedbackSuccess("Feedback saved. The student can see it in their portal."); }
-    catch (error) { setFeedbackError(error.message); } finally { setSaving(false); }
-  }
-  return <Panel className="class-card"><div className="class-icon"><Icon name="classes" size={22}/></div><p className="eyebrow">Program #{classroom.program}</p><h3>{classroom.name}</h3><p>{roster.data?.length ?? (roster.loading ? "Loading" : "—")} enrolled students</p><Button variant="secondary" onClick={() => setOpen((value) => !value)}>{open ? "Hide roster" : "View roster"}</Button>{feedbackSuccess && <Feedback success={feedbackSuccess} />}{open && (roster.error ? <Feedback error={roster.error}/> : roster.loading || enrollments.loading ? <Loading>Loading roster…</Loading> : <div className="roster-list">{roster.data.map((student) => { const enrollment = enrollments.data?.find((item) => String(item.student) === String(student.id)); return <div className="roster-entry" key={student.id}><div>{student.first_name} {student.last_name}<small>@{student.username}</small></div>{enrollment && <button className="inline-link" onClick={() => { setFeedbackFor(feedbackFor === String(enrollment.id) ? "" : String(enrollment.id)); setFeedbackError(""); }} type="button">{feedbackFor === String(enrollment.id) ? "Close feedback" : "Write feedback"}</button>}{feedbackFor === String(enrollment?.id) && <form className="feedback-form" onSubmit={(event) => submitFeedback(event, enrollment.id)}><label className="sr-only" htmlFor={`feedback-${enrollment.id}`}>Student feedback</label><textarea id={`feedback-${enrollment.id}`} rows="3" maxLength="500" required value={feedbackMessage} onChange={(event) => setFeedbackMessage(event.target.value)} placeholder="Write private feedback for this student…"/><Feedback error={feedbackError}/><Button disabled={saving}>{saving ? "Saving…" : "Save feedback"}</Button></form>}</div>; })}{!roster.data.length && <p>No students enrolled yet.</p>}</div>)}</Panel>;
+  return <Panel className="class-card"><div className="class-icon"><Icon name="classes" size={22}/></div><p className="eyebrow">{classroom.program_name || "Program"}</p><h3>{classroom.name}</h3><p>{roster.data?.length ?? (roster.loading ? "Loading" : "—")} enrolled students</p><Button variant="secondary" onClick={() => setOpen((value) => !value)}>{open ? "Hide roster" : "View roster"}</Button>{open && (roster.error ? <Feedback error={roster.error}/> : roster.loading ? <Loading>Loading roster…</Loading> : <div className="roster-list">{roster.data.map((student) => <div key={student.id}>{student.first_name} {student.last_name}<small>@{student.username}</small></div>)}{!roster.data.length && <p>No students enrolled yet.</p>}</div>)}</Panel>;
 }
 
 function Metric({ label, value }) { return <Panel className="metric-card"><span>{label}</span><strong>{value}</strong></Panel>; }
@@ -648,17 +713,17 @@ function Workspace({ user, onLogout }) {
   const studentManageMatch = path.match(/^\/app\/students\/(\d+)\/manage\/?$/);
   const instructorManageMatch = path.match(/^\/app\/instructors\/(\d+)\/manage\/?$/);
   const studentReportMatch = path.match(/^\/app\/student-reports\/(\d+)\/?$/);
-  const supportedPages = new Set(["programs", "overview", "students", "classes", "instructors", "all-instructors", "reports", "feedback", "student-reports", "student-feedback", "student-report-detail", "portal"]);
-  const permittedPages = isAdmin ? supportedPages : isInstructor ? new Set(["classes", "reports", "feedback"]) : new Set(["portal", "student-reports", "student-feedback", "student-report-detail"]);
+  const supportedPages = new Set(["programs", "overview", "students", "classes", "instructors", "all-instructors", "reports", "student-reports", "student-feedback", "student-report-detail", "portal", "test-scores"]);
+  const permittedPages = isAdmin ? supportedPages : isInstructor ? new Set(["classes", "reports"]) : new Set(["portal", "student-reports", "student-feedback", "student-report-detail", "test-scores"]);
   const page = studentManageMatch && isAdmin ? "student-manage" : instructorManageMatch && isAdmin ? "instructor-manage" : studentReportMatch && !isAdmin && !isInstructor ? "student-report-detail" : lastSegment === "app" || !supportedPages.has(lastSegment) || !permittedPages.has(lastSegment) ? defaultPage : lastSegment;
   const chooseProgram = (program) => { setActiveProgramId(String(program.id)); localStorage.setItem("kd-active-program", String(program.id)); navigate("/app/overview"); };
   const clearProgram = () => { setActiveProgramId(""); localStorage.removeItem("kd-active-program"); navigate("/app/programs"); };
   const navItems = isAdmin
     ? (activeProgram ? [{ key: "programs", label: "Programs", icon: "program" }, { key: "overview", label: "Overview", icon: "home" }, { key: "students", label: "Students", icon: "students" }, { key: "classes", label: "Classes", icon: "classes" }, { key: "instructors", label: "Instructors", icon: "instructor" }, { key: "reports", label: "Reports", icon: "reports" }, { key: "all-instructors", label: "All instructors", icon: "instructor" }] : [{ key: "programs", label: "Programs", icon: "program" }, { key: "students", label: "All students", icon: "students" }, { key: "all-instructors", label: "All instructors", icon: "instructor" }])
-    : isInstructor ? [{ key: "classes", label: "My classes", icon: "classes" }, { key: "reports", label: "Class reports", icon: "reports" }, { key: "feedback", label: "Private feedback", icon: "feedback" }]
-      : [{ key: "portal", label: "My learning", icon: "home" }, { key: "student-reports", label: "Class Reports", icon: "reports" }, { key: "student-feedback", label: "Private feedback", icon: "feedback" }];
+    : isInstructor ? [{ key: "classes", label: "My classes", icon: "classes" }, { key: "reports", label: "Class report & feedback", icon: "reports" }]
+      : [{ key: "portal", label: "My learning", icon: "home" }, { key: "student-reports", label: "Class Reports", icon: "reports" }, { key: "student-feedback", label: "Private feedback", icon: "feedback" }, { key: "test-scores", label: "Test Scores", icon: "reports" }];
   useEffect(() => { if (isAdmin && !programsLoading && ["overview", "classes", "reports"].includes(page) && !activeProgram) navigate("/app/programs"); }, [isAdmin, page, activeProgram, programsLoading]);
-  const titleByPage = { programs: "Programs", overview: activeProgram?.name || "Program overview", students: "Students", classes: "Classes", instructors: "Instructors", "all-instructors": "All instructors", reports: "Reports", feedback: "Private feedback", "student-reports": "Class Reports", "student-feedback": "Private feedback", "student-report-detail": "Class report", "student-manage": "Manage student", "instructor-manage": "Manage instructor", portal: "My learning" };
+  const titleByPage = { programs: "Programs", overview: activeProgram?.name || "Program overview", students: "Students", classes: "Classes", instructors: "Instructors", "all-instructors": "All instructors", reports: "Class report & feedback", "student-reports": "Class Reports", "student-feedback": "Private feedback", "student-report-detail": "Class report", "student-manage": "Manage student", "instructor-manage": "Manage instructor", portal: "My learning", "test-scores": "Test Scores" };
   const pageTitle = titleByPage[page] || (isAdmin ? "Programs" : isInstructor ? "My classes" : "My learning");
   return <div className={`app-shell ${sidebarHidden ? "sidebar-hidden" : ""}`}>
     <a className="skip-link" href="#main-content">Skip to content</a>
@@ -677,11 +742,18 @@ function Workspace({ user, onLogout }) {
         {isAdmin && page === "reports" && activeProgram && <ReportsPage key={activeProgram.id} program={activeProgram} user={user}/>}
         {isInstructor && page === "classes" && <InstructorWorkspace user={user} page="classes"/>}
         {isInstructor && page === "reports" && <InstructorWorkspace user={user} page="reports"/>}
-        {isInstructor && page === "feedback" && <InstructorFeedbackPage/>}
+        {!isAdmin && !isInstructor && page === "test-scores" && <StudentTestScores/>}
         {!isAdmin && !isInstructor && ["portal", "student-reports", "student-feedback", "student-report-detail"].includes(page) && <StudentPortal page={page === "student-report-detail" ? "student-report-detail" : page === "student-reports" ? "student-reports" : page === "student-feedback" ? "student-feedback" : "portal"} reportId={studentReportMatch?.[1]} navigate={navigate}/>}
       </main>
     </div>
   </div>;
+}
+
+function StudentTestScores() {
+  return <>
+    <PageHeading title="Test Scores" description="Your assessment results and progress."/>
+    <Empty title="Coming soon">Test scores will appear here when this feature is ready.</Empty>
+  </>;
 }
 
 function StudentManage({ studentId, programs, onBack }) {
@@ -709,7 +781,7 @@ function StudentManage({ studentId, programs, onBack }) {
     return programData;
   }, [studentId, programKey]);
   const programData = enrollmentsState.data || [];
-  const enrollments = programData.flatMap((group) => group.enrollments.map((item) => ({ ...item, programName: group.program.name, className: group.classes.find((room) => String(room.id) === String(item.classroom))?.name || item.class_name || `Class #${item.classroom}` })));
+  const enrollments = programData.flatMap((group) => group.enrollments.map((item) => ({ ...item, programName: group.program.name, className: group.classes.find((room) => String(room.id) === String(item.classroom))?.name || item.class_name || "Class" })));
   const enrolledProgramIds = new Set(enrollments.map((item) => String(item.program)));
   const availablePrograms = programs.filter((item) => !enrolledProgramIds.has(String(item.id)));
   const addProgram = availablePrograms.find((item) => String(item.id) === String(newProgramId)) || availablePrograms[0] || null;

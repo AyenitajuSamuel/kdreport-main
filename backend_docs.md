@@ -100,7 +100,7 @@ User ── one-to-one ── StudentProfile ── one-to-many ── StudentEn
                            └── InstructorAssignment ────────┘
 
 ClassReport ── belongs to a Class and an InstructorProfile
-StudentFeedback ── belongs to a StudentEnrollment and an InstructorProfile
+StudentFeedback ── belongs to a StudentEnrollment, InstructorProfile, and optional ClassReport
 ```
 
 - A `User` authenticates with a unique username and has one role. First and last names are Django user fields.
@@ -110,8 +110,8 @@ StudentFeedback ── belongs to a StudentEnrollment and an InstructorProfile
 - A `Class` belongs to one program. Class names must be unique within that program.
 - A `StudentEnrollment` connects one student to a class and program. A student can have only one enrollment per program. Updating its `classroom` moves the student to another class in that program.
 - An `InstructorAssignment` connects an instructor to a class, program, and subject. The same instructor/class/subject combination cannot be added twice; the same subject can be taught by different instructors or in different classes.
-- A `ClassReport` has an author, class, title, body, status, written timestamp, and optional publication timestamp. New reports start as drafts. There is no one-report-per-date constraint.
-- `StudentFeedback` belongs to a specific enrollment and has an author and written timestamp. The model currently has no draft/published status.
+- A `ClassReport` stores the topic, learning goals, key concepts and skills, activities, practical work/project, assignment and optional due date, next lesson/follow-up, materials/resources, author, class, status, and timestamps. Legacy title/body columns remain for older reports.
+- `StudentFeedback` can be attached to a class report and enrollment. New reports require one response for every enrolled student across attendance, participation, understanding, practical work, assignment status, and collaboration, plus an optional observation note. Legacy free-text records remain readable.
 
 `PROTECT` relationships on academic and reporting records help prevent deletion of records that have dependent history. Programs should generally be archived by changing their status.
 
@@ -120,7 +120,7 @@ StudentFeedback ── belongs to a StudentEnrollment and an InstructorProfile
 | Role | Access |
 | --- | --- |
 | Admin or superuser | Manage accounts, programs, classes, enrollments, and instructor assignments. Read reporting data. |
-| Instructor | Read their assigned classes and rosters; create reports and feedback only for assigned classes/enrollments; view and edit their own records while still assigned. |
+| Instructor | Read assigned classes and rosters; create structured reports with required feedback for every enrolled student; view and edit their own report records while assigned. |
 | Student | Read their own profile, enrollments, published class reports for enrolled classes, and feedback attached to their enrollment. Change their own username. |
 
 Unauthenticated requests to protected API views are rejected. A record ID in a URL is not proof of access: views filter by the signed-in user, their role, and the relevant assignment or enrollment.
@@ -206,24 +206,35 @@ Paths are relative to `/api/v1/`.
 
 | Methods | Path | Who can use it | Purpose |
 | --- | --- | --- | --- |
-| `GET`, `POST` | `/classes/{class_id}/reports/` | Assigned instructor; admin can list | List reports or create a draft report for the class. |
+| `GET`, `POST` | `/classes/{class_id}/reports/` | Assigned instructor; admin can list | List reports or create a draft report with structured class fields and feedback for every enrolled student. |
 | `GET`, `PUT`, `PATCH` | `/class-reports/{report_id}/` | Authoring instructor while assigned; admin | Read or update a report. Instructors cannot edit a published report. |
+| `POST` | `/class-reports/{report_id}/preview/` | Authoring instructor while assigned; admin | Generate and return stored Gemini previews for each student in a draft report. |
 | `POST` | `/class-reports/{report_id}/publish/` | Authoring instructor while assigned; admin | Publish a draft and set `published_on`. |
-| `GET`, `POST` | `/enrollments/{enrollment_id}/feedback/` | Instructor assigned to the enrollment's class; admin can list | List feedback or create feedback for that enrollment. |
+| `GET`, `POST` | `/enrollments/{enrollment_id}/feedback/` | Instructor assigned to the enrollment's class; admin can list | Legacy free-text feedback endpoint; new feedback is collected with a class report. |
 | `GET`, `PUT`, `PATCH` | `/student-feedback/{feedback_id}/` | Authoring instructor while assigned; admin | Read or update a feedback record. |
 
-Create a class report with:
+Create a class report with structured lesson content and one response per enrollment:
 
 ```json
 {
-  "title": "Week 3 update",
-  "body": "The class practiced ..."
+  "topic_taught": "Introduction to robotics",
+  "learning_goals": "Students will build a simple motor circuit and explain how the motor moves.",
+  "key_concepts": "Circuit, battery, motor, polarity, and completing a build sequence.",
+  "activities": "Built a simple motor circuit in pairs.",
+  "practical_works": "Completed the motor and wheel assembly.",
+  "assignment": "Draw and label a robot design.",
+  "assignment_due_date": "2026-11-17",
+  "next_lesson": "Use the circuit in a moving robot build.",
+  "materials": "Motor, battery pack, wires, wheels, and chassis.",
+  "student_feedback": [
+    {"enrollment": 12, "answers": {"attendance_status": "on_time", "participation": "independent_contribution", "understanding": "demonstrated", "practical_work": "completed_with_support", "assignment_status": "completed", "collaboration": "worked_well"}, "note": "Independently traced a loose wire and explained the fix to their partner."}
+  ]
 }
 ```
 
-The server sets the author and class from the signed-in instructor and URL. A report starts as `draft`. Its `written_on` timestamp is assigned when it is created; the API currently does not accept a custom written date. Only published class reports are returned by the student reports endpoint. The list endpoint accepts optional filters, for example `?status=published&date=2026-11-09`, where `date` filters by the report's written date.
+The enrollment IDs must exactly match the class roster, and all six radio answers are required for each student. The server sets the author and class from the signed-in instructor and URL. A report starts as `draft`. Its `written_on` timestamp is assigned when it is created; the API currently does not accept a custom written date. Gemini creates a fuller, factual parent update from the class fields and each student's observations. Publishing checks roster completeness and sends a separate personalized PDF to each parent email. Only published class reports are returned by the student reports endpoint. The list endpoint accepts optional filters, for example `?status=published&date=2026-11-09`, where `date` filters by the report's written date.
 
-Create feedback with:
+Legacy free-text feedback can still be read through the existing endpoints. New reports should use the structured `student_feedback` payload shown above. Student accounts receive only feedback tied to their own enrollment.
 
 ```json
 {
@@ -233,7 +244,7 @@ Create feedback with:
 
 The URL enrollment determines the student, and the signed-in instructor becomes the author. The instructor must currently be assigned to the enrollment's class. Because `StudentFeedback` has no publication field, feedback is currently returned immediately by `/student/me/feedback/`.
 
-There is no unique constraint limiting how many reports or feedback records may be written. This matches the current product rule that instructors write reports at their discretion.
+Each structured report has at most one feedback record per enrollment. There is no one-report-per-date constraint.
 
 ## 10. Request and response conventions
 
@@ -276,7 +287,12 @@ EMAIL_HOST_USER=<smtp username>
 EMAIL_HOST_PASSWORD=<smtp password>
 EMAIL_USE_TLS=True
 DEFAULT_FROM_EMAIL=Kiddies Droid Portal <no-reply@example.com>
+GEMINI_API_KEY=<server-side Google AI Studio key>
+GEMINI_MODEL=gemini-3.1-flash-lite
+GEMINI_FALLBACK_MODEL=gemini-3.5-flash-lite
 ```
+
+Gemini is called by Django when an instructor previews a saved draft and as a fallback when publishing. It generates and stores one parent-facing report for each student's feedback record. After short retries on a 503 from `GEMINI_MODEL`, Django tries `GEMINI_FALLBACK_MODEL` once; set that variable to an empty string to disable model fallback. The instructor can review the generated text before publishing; the PDF email includes that text alongside class details and that student's answers. Keep `GEMINI_API_KEY` only in the backend deployment's secret store; never add it to Vite environment variables or browser code. The unpaid Gemini API tier may use submitted content to improve Google products, so review Google's current terms before sending student observations; use a paid tier if the organization requires submitted content not to be used for product improvement.
 
 Set `DJANGO_TRUST_PROXY_SSL_HEADER=True` only when a trusted reverse proxy strips any client-supplied `X-Forwarded-Proto` header and sets it itself. Keep `SECURE_HSTS_PRELOAD` disabled until the production domain and every subdomain are ready to remain HTTPS-only; enabling browser preload can be difficult to reverse.
 

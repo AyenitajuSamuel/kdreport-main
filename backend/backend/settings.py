@@ -8,6 +8,29 @@ from django.core.exceptions import ImproperlyConfigured
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def load_local_env_file():
+    """Load backend/.env values without overriding the process environment."""
+    env_path = BASE_DIR / ".env"
+    if not env_path.is_file():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        key, separator, value = line.partition("=")
+        if not separator or not key.strip():
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ.setdefault(key.strip(), value)
+
+
+load_local_env_file()
+
+
 def env_bool(name, default=False):
     value = os.environ.get(name)
     return default if value is None else value.strip().lower() in {"1", "true", "yes", "on"}
@@ -62,6 +85,8 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
+if not DEBUG:
+    MIDDLEWARE.insert(1, "whitenoise.middleware.WhiteNoiseMiddleware")
 
 ROOT_URLCONF = "backend.urls"
 TEMPLATES = [
@@ -153,6 +178,11 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+STATICFILES_DIRS = [BASE_DIR.parent / "frontend" / "dist"]
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+}
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {
@@ -160,20 +190,27 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
 }
 
-EMAIL_BACKEND = (
+EMAIL_BACKEND = os.environ.get(
+    "EMAIL_BACKEND",
     "django.core.mail.backends.console.EmailBackend"
     if DEBUG
-    else "django.core.mail.backends.smtp.EmailBackend"
+    else "django.core.mail.backends.smtp.EmailBackend",
 )
-EMAIL_HOST = os.environ.get("EMAIL_HOST", "localhost")
-EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "smtp.resend.com")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "465"))
 EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
 EMAIL_TIMEOUT = int(os.environ.get("EMAIL_TIMEOUT", "20"))
-EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", default=not DEBUG)
-EMAIL_USE_SSL = env_bool("EMAIL_USE_SSL", default=False)
+EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", default=not DEBUG and EMAIL_PORT != 465)
+EMAIL_USE_SSL = env_bool("EMAIL_USE_SSL", default=EMAIL_PORT == 465)
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "Kiddies Droid Portal <no-reply@localhost>")
 FRONTEND_BASE_URL = os.environ.get("FRONTEND_BASE_URL", "http://localhost:5173").rstrip("/")
+
+# Gemini is called only by the backend during report publishing. Keep the key
+# in the deployment environment and never expose it to the frontend.
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
+GEMINI_FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite")
 
 # Production assumes the app is served over HTTPS. Configure the reverse proxy
 # to set the forwarded-proto header correctly before enabling this redirect.
