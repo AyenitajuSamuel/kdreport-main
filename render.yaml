@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: free
     buildCommand: ./build.sh
-    startCommand: python backend/manage.py migrate --noinput && python -m gunicorn backend.wsgi:application --bind 0.0.0.0:$PORT
+    startCommand: python backend/manage.py migrate --noinput && python -m gunicorn backend.wsgi:application --chdir backend --bind 0.0.0.0:$PORT
     healthCheckPath: /
     envVars:
       - key: DJANGO_DEBUG
