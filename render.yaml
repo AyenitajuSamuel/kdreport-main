@@ -1,10 +1,10 @@
 services:
   - type: web
-    name: kdreport-presentation
+    name: kiddiesdroidportal
     runtime: python
     plan: free
     buildCommand: ./build.sh
-    startCommand: python backend/manage.py migrate --noinput && python -m gunicorn backend.wsgi:application --chdir backend --bind 0.0.0.0:$PORT
+    startCommand: python backend/manage.py migrate --noinput && python backend/manage.py bootstrap_admin && python -m gunicorn backend.wsgi:application --chdir backend --bind 0.0.0.0:$PORT
     healthCheckPath: /
     envVars:
       - key: DJANGO_DEBUG
@@ -12,9 +12,9 @@ services:
       - key: DJANGO_SECRET_KEY
         generateValue: true
       - key: DJANGO_ALLOWED_HOSTS
-        value: kdreport-presentation.onrender.com
+        value: kiddiesdroidportal.onrender.com
       - key: DJANGO_CSRF_TRUSTED_ORIGINS
-        value: https://kdreport-presentation.onrender.com
+        value: https://kiddiesdroidportal.onrender.com
       - key: DJANGO_TRUST_PROXY_SSL_HEADER
         value: "true"
       - key: POSTGRES_DB
