@@ -1,5 +1,6 @@
 import os
 
+from django.contrib.auth.hashers import make_password
 from django.db import migrations
 
 
@@ -17,11 +18,11 @@ def create_initial_admin(apps, schema_editor):
     user = User(
         username=username,
         email=email,
+        password=make_password(password),
         role="admin",
         is_staff=True,
         is_superuser=True,
     )
-    user.set_password(password)
     user.save()
 
 
